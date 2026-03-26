@@ -1,0 +1,8 @@
+.next
+node_modules
+.env.local
+.env
+coverage
+dist
+tsconfig.tsbuildinfo
+.claude/settings.local.json

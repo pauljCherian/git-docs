@@ -1,0 +1,28 @@
+{
+  "name": "git-docs",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "15.2.3",
+    "next-auth": "^5.0.0-beta.30",
+    "pg": "^8.20.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.14",
+    "@types/pg": "^8.20.0",
+    "@types/react": "^19.0.12",
+    "@types/react-dom": "^19.0.4",
+    "eslint": "^9.22.0",
+    "eslint-config-next": "15.2.3",
+    "typescript": "^5.8.2"
+  }
+}
