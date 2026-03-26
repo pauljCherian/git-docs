@@ -448,16 +448,141 @@ textarea {
   margin-top: 8px;
 }
 
+.terminal {
+  background: #1e1e2e;
+  border-radius: 12px;
+  overflow: hidden;
+  font-family: "SF Mono", "Fira Code", "Courier New", Courier, monospace;
+  font-size: 0.88rem;
+  line-height: 1.6;
+  cursor: text;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.terminal-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #181825;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.terminal-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.terminal-dot.red { background: #f38ba8; }
+.terminal-dot.yellow { background: #f9e2af; }
+.terminal-dot.green { background: #a6e3a1; }
+
+.terminal-title {
+  margin-left: 8px;
+  color: #6c7086;
+  font-size: 0.8rem;
+}
+
+.terminal-body {
+  padding: 12px 14px;
+  max-height: 280px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #45475a #1e1e2e;
+}
+
+.terminal-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.terminal-body::-webkit-scrollbar-track {
+  background: #1e1e2e;
+}
+
+.terminal-body::-webkit-scrollbar-thumb {
+  background: #45475a;
+  border-radius: 3px;
+}
+
+.terminal-welcome {
+  color: #6c7086;
+  margin-bottom: 8px;
+  font-style: italic;
+}
+
+.terminal-input-line,
+.terminal-output-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.terminal-input-line {
+  color: #cdd6f4;
+}
+
+.terminal-output-line {
+  color: #a6adc8;
+}
+
+.terminal-prompt {
+  color: #a6e3a1;
+  user-select: none;
+}
+
+.terminal-command {
+  color: #cdd6f4;
+}
+
+.terminal-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.terminal-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #cdd6f4;
+  font-family: inherit;
+  font-size: inherit;
+  padding: 0;
+  caret-color: #a6e3a1;
+  border-radius: 0;
+}
+
+.terminal-input::placeholder {
+  color: #45475a;
+}
+
+.terminal-pending {
+  padding: 6px 14px;
+  background: #181825;
+  color: #f9e2af;
+  font-size: 0.8rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  animation: terminal-blink 1s ease-in-out infinite;
+}
+
+@keyframes terminal-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 @media (max-width: 980px) {
   .hero,
   .grid,
-  .action-grid,
   .todo-row {
     grid-template-columns: 1fr;
   }
 
-  .todo-actions,
-  .toolbar {
+  .todo-actions {
     flex-wrap: wrap;
+  }
+
+  .terminal-body {
+    max-height: 200px;
   }
 }

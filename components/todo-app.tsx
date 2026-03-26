@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition as reactStartTransition, useOptimistic, useState, useTransition } from "react";
+import { startTransition as reactStartTransition, useEffect, useOptimistic, useRef, useState, useTransition } from "react";
 import { signOut } from "next-auth/react";
 import { AppState, BranchRecord, PageState, RevisionRecord, TodoItem } from "@/lib/types";
 import { nowIso } from "@/lib/utils";
@@ -23,6 +23,10 @@ type StatusMessage = {
   tone: StatusTone;
   text: string;
 };
+
+type TerminalEntry =
+  | { type: "input"; text: string; branch: string }
+  | { type: "output"; text: string };
 
 async function postJson<TBody, TResult>(url: string, body: TBody): Promise<TResult> {
   const response = await fetch(url, {
@@ -68,8 +72,6 @@ export function TodoApp({ initialData, dbConfigured, user }: TodoAppProps) {
   const [pageState, setPageState] = useState<PageState>(clonePageState(initialData.pageState));
   const [branches, setBranches] = useState<BranchRecord[]>(initialData.branches);
   const [activeBranchId, setActiveBranchId] = useState(initialData.activeBranchId);
-  const [commitMessage, setCommitMessage] = useState("");
-  const [branchName, setBranchName] = useState("");
   const [revisions, setRevisions] = useState<RevisionRecord[]>(initialData.revisions);
   const [status, setStatus] = useState<StatusMessage>({
     tone: "neutral",
@@ -78,6 +80,12 @@ export function TodoApp({ initialData, dbConfigured, user }: TodoAppProps) {
       : "Preview mode: set DATABASE_URL to enable Sync, Commit, and Branch persistence.",
   });
   const [expandedRevisionId, setExpandedRevisionId] = useState<string | null>(null);
+  const [terminalHistory, setTerminalHistory] = useState<TerminalEntry[]>([]);
+  const [currentInput, setCurrentInput] = useState("");
+  const [commandHistory, setCommandHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const terminalEndRef = useRef<HTMLDivElement>(null);
+  const terminalInputRef = useRef<HTMLInputElement>(null);
   const [pendingAction, startTransition] = useTransition();
   const [optimisticTodos, updateOptimisticTodos] = useOptimistic(
     pageState.todos,
@@ -195,7 +203,7 @@ export function TodoApp({ initialData, dbConfigured, user }: TodoAppProps) {
     });
   }
 
-  function commitCurrentState() {
+  function commitCurrentState(message: string) {
     startTransition(async () => {
       try {
         const payload = await postJson<
@@ -205,7 +213,7 @@ export function TodoApp({ initialData, dbConfigured, user }: TodoAppProps) {
           documentId: initialData.document.id,
           branchId: activeBranch.id,
           pageState,
-          message: commitMessage,
+          message,
         });
 
         setRevisions((current) => [payload.revision, ...current]);
@@ -221,7 +229,6 @@ export function TodoApp({ initialData, dbConfigured, user }: TodoAppProps) {
               : branch,
           ),
         );
-        setCommitMessage("");
         updateStatus(
           "success",
           `Committed "${payload.revision.message}" on ${activeBranch.name}.`,
@@ -235,7 +242,7 @@ export function TodoApp({ initialData, dbConfigured, user }: TodoAppProps) {
     });
   }
 
-  function createNewBranch() {
+  function createNewBranch(name: string) {
     startTransition(async () => {
       try {
         const sourceRevisionId =
@@ -253,7 +260,7 @@ export function TodoApp({ initialData, dbConfigured, user }: TodoAppProps) {
         >("/api/branch", {
           documentId: initialData.document.id,
           sourceBranchId: activeBranch.id,
-          newBranchName: branchName,
+          newBranchName: name,
           pageState,
           sourceRevisionId: sourceRevisionId || null,
         });
@@ -263,7 +270,6 @@ export function TodoApp({ initialData, dbConfigured, user }: TodoAppProps) {
         setActiveBranchId(nextBranch.id);
         setPageState(clonePageState(nextBranch.workingState));
         setRevisions([]);
-        setBranchName("");
         updateStatus("success", `Created and switched to branch "${nextBranch.name}".`);
       } catch (error) {
         updateStatus(
@@ -297,6 +303,202 @@ export function TodoApp({ initialData, dbConfigured, user }: TodoAppProps) {
       }
     });
   }
+
+  // Terminal logic
+
+  function fakeHash() {
+    return Math.random().toString(16).slice(2, 9);
+  }
+
+  function appendToTerminal(lines: string | string[]) {
+    const entries: TerminalEntry[] = (Array.isArray(lines) ? lines : [lines]).map((text) => ({
+      type: "output" as const,
+      text,
+    }));
+    setTerminalHistory((prev) => [...prev, ...entries]);
+  }
+
+  function executeCommand(rawInput: string) {
+    const trimmed = rawInput.trim();
+    if (!trimmed) return;
+
+    setTerminalHistory((prev) => [
+      ...prev,
+      { type: "input", text: trimmed, branch: activeBranch.name },
+    ]);
+    setCommandHistory((prev) => [...prev, trimmed]);
+    setHistoryIndex(-1);
+    setCurrentInput("");
+
+    const cmd = trimmed.toLowerCase();
+
+    if (cmd === "clear") {
+      setTerminalHistory([]);
+      return;
+    }
+
+    if (cmd === "help") {
+      appendToTerminal([
+        "Available commands:",
+        "  git status              Show working tree status",
+        "  git add .               Stage changes (auto-tracked)",
+        "  git commit -m \"msg\"     Commit with message",
+        "  git push                Sync branch to remote",
+        "  git checkout -b <name>  Create and switch to new branch",
+        "  git checkout <name>     Switch to existing branch",
+        "  git branch              List all branches",
+        "  git log                 Show commit history",
+        "  clear                   Clear terminal",
+        "  help                    Show this message",
+      ]);
+      return;
+    }
+
+    if (cmd === "git status") {
+      const entries = diffTodos(lastSnapshot, pageState.todos);
+      if (entries.length === 0) {
+        appendToTerminal([
+          `On branch ${activeBranch.name}`,
+          "nothing to commit, working tree clean",
+        ]);
+      } else {
+        const lines = [
+          `On branch ${activeBranch.name}`,
+          "Changes not staged for commit:",
+          '  (use "git commit -m <message>" to record changes)',
+          "",
+        ];
+        for (const entry of entries) {
+          const label = entry.type === "added" ? "new file" : entry.type === "removed" ? "deleted" : "modified";
+          lines.push(`    ${label}:   ${entry.todo.text || "(empty)"}`);
+        }
+        appendToTerminal(lines);
+      }
+      return;
+    }
+
+    if (cmd === "git add ." || cmd === "git add -a") {
+      appendToTerminal("All todos are automatically tracked. Nothing to stage manually.");
+      return;
+    }
+
+    if (cmd === "git push") {
+      const h1 = fakeHash();
+      const h2 = fakeHash();
+      appendToTerminal([
+        "Enumerating objects: 3, done.",
+        "Counting objects: 100% (3/3), done.",
+        "Writing objects: 100% (3/3), 312 bytes | 312.00 KiB/s, done.",
+        `To origin/${activeBranch.name}`,
+        `   ${h1}..${h2}  ${activeBranch.name} -> ${activeBranch.name}`,
+      ]);
+      syncCurrentState();
+      return;
+    }
+
+    // git commit -m "message" or git commit -m 'message' or git commit -m message
+    const commitMatch = trimmed.match(/^git\s+commit\s+-m\s+(?:"([^"]+)"|'([^']+)'|(\S+))$/i);
+    if (cmd.startsWith("git commit")) {
+      if (!commitMatch) {
+        appendToTerminal("Aborting commit due to empty commit message.");
+        return;
+      }
+      const message = commitMatch[1] ?? commitMatch[2] ?? commitMatch[3];
+      if (!hasChanges) {
+        appendToTerminal([
+          `On branch ${activeBranch.name}`,
+          "nothing to commit, working tree clean",
+        ]);
+        return;
+      }
+      const changeCount = diffTodos(lastSnapshot, pageState.todos).length;
+      appendToTerminal([
+        `[${activeBranch.name} ${fakeHash()}] ${message}`,
+        ` ${changeCount} todo${changeCount !== 1 ? "s" : ""} changed`,
+      ]);
+      commitCurrentState(message);
+      return;
+    }
+
+    // git checkout -b <name>
+    const checkoutNewMatch = trimmed.match(/^git\s+checkout\s+-b\s+(\S+)$/i);
+    if (checkoutNewMatch) {
+      const name = checkoutNewMatch[1];
+      appendToTerminal(`Switched to a new branch '${name}'`);
+      createNewBranch(name);
+      return;
+    }
+
+    // git checkout <name>
+    const checkoutMatch = trimmed.match(/^git\s+checkout\s+(\S+)$/i);
+    if (checkoutMatch) {
+      const name = checkoutMatch[1];
+      const target = branches.find((b) => b.name === name);
+      if (!target) {
+        appendToTerminal(`error: pathspec '${name}' did not match any branch known to git.`);
+        return;
+      }
+      appendToTerminal(`Switched to branch '${name}'`);
+      switchBranch(target.id);
+      return;
+    }
+
+    if (cmd === "git log") {
+      if (revisions.length === 0) {
+        appendToTerminal(`No commits on branch '${activeBranch.name}' yet.`);
+        return;
+      }
+      const lines: string[] = [];
+      for (const rev of revisions.slice(0, 10)) {
+        lines.push(`commit ${rev.id.slice(0, 7)}`);
+        lines.push(`Date:   ${new Date(rev.createdAt).toLocaleString()}`);
+        lines.push("");
+        lines.push(`    ${rev.message}`);
+        lines.push("");
+      }
+      appendToTerminal(lines);
+      return;
+    }
+
+    if (cmd === "git branch") {
+      const lines = branches.map(
+        (b) => `${b.id === activeBranchId ? "* " : "  "}${b.name}`,
+      );
+      appendToTerminal(lines);
+      return;
+    }
+
+    appendToTerminal(`git: '${trimmed}' is not a git command. See 'help'.`);
+  }
+
+  function handleTerminalKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      executeCommand(currentInput);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (commandHistory.length === 0) return;
+      const nextIndex =
+        historyIndex === -1 ? commandHistory.length - 1 : Math.max(0, historyIndex - 1);
+      setHistoryIndex(nextIndex);
+      setCurrentInput(commandHistory[nextIndex]);
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (historyIndex === -1) return;
+      const nextIndex = historyIndex + 1;
+      if (nextIndex >= commandHistory.length) {
+        setHistoryIndex(-1);
+        setCurrentInput("");
+      } else {
+        setHistoryIndex(nextIndex);
+        setCurrentInput(commandHistory[nextIndex]);
+      }
+    }
+  }
+
+  useEffect(() => {
+    terminalEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [terminalHistory]);
 
   return (
     <main className="shell">
@@ -411,46 +613,49 @@ export function TodoApp({ initialData, dbConfigured, user }: TodoAppProps) {
             )}
           </div>
 
-          <div className="action-grid">
-            <label className="field">
-              <span>Commit message</span>
-              <input
-                value={commitMessage}
-                onChange={(event) => setCommitMessage(event.target.value)}
-                placeholder="Summarize this snapshot"
-              />
-            </label>
-            <label className="field">
-              <span>New branch</span>
-              <input
-                value={branchName}
-                onChange={(event) => setBranchName(event.target.value)}
-                placeholder="explore-idea"
-              />
-            </label>
-          </div>
-
-          <div className="toolbar">
-            <button type="button" className="primary" onClick={syncCurrentState}>
-              Sync
-            </button>
-            <button
-              type="button"
-              className="secondary"
-              onClick={commitCurrentState}
-              disabled={!commitMessage.trim() || !hasChanges}
-            >
-              Commit
-            </button>
-            <button
-              type="button"
-              className="secondary"
-              onClick={createNewBranch}
-              disabled={!branchName.trim()}
-            >
-              Branch
-            </button>
-            {pendingAction ? <span className="pending-tag">Saving…</span> : null}
+          <div className="terminal" onClick={() => terminalInputRef.current?.focus()}>
+            <div className="terminal-header">
+              <span className="terminal-dot red" />
+              <span className="terminal-dot yellow" />
+              <span className="terminal-dot green" />
+              <span className="terminal-title">todo-git ~ {activeBranch.name}</span>
+            </div>
+            <div className="terminal-body">
+              <div className="terminal-welcome">
+                Welcome to git-todos. Type &apos;help&apos; for available commands.
+              </div>
+              {terminalHistory.map((entry, i) => (
+                <div key={i} className={entry.type === "input" ? "terminal-input-line" : "terminal-output-line"}>
+                  {entry.type === "input" ? (
+                    <>
+                      <span className="terminal-prompt">~/todos ({entry.branch}) $</span>{" "}
+                      <span className="terminal-command">{entry.text}</span>
+                    </>
+                  ) : (
+                    <span>{entry.text}</span>
+                  )}
+                </div>
+              ))}
+              <div className="terminal-input-row">
+                <span className="terminal-prompt">~/todos ({activeBranch.name}) $</span>
+                <input
+                  ref={terminalInputRef}
+                  type="text"
+                  className="terminal-input"
+                  value={currentInput}
+                  onChange={(e) => {
+                    setCurrentInput(e.target.value);
+                    setHistoryIndex(-1);
+                  }}
+                  onKeyDown={handleTerminalKeyDown}
+                  spellCheck={false}
+                  autoComplete="off"
+                  disabled={pendingAction}
+                />
+              </div>
+              <div ref={terminalEndRef} />
+            </div>
+            {pendingAction ? <div className="terminal-pending">Running...</div> : null}
           </div>
         </div>
 
